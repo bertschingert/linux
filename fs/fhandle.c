@@ -363,17 +363,12 @@ struct file_handle *get_user_handle(struct file_handle __user *ufh)
 	return handle;
 }
 
-static int handle_to_path(int mountdirfd, struct file_handle __user *ufh,
+static int handle_to_path(int mountdirfd, struct file_handle *handle,
 		   struct path *path, unsigned int o_flags)
 {
 	int retval = 0;
-	struct file_handle *handle __free(kfree) = NULL;
 	struct handle_to_path_ctx ctx = {};
 	const struct export_operations *eops;
-
-	handle = get_user_handle(ufh);
-	if (IS_ERR(handle))
-		return PTR_ERR(handle);
 
 	retval = get_path_anchor(mountdirfd, &ctx.root);
 	if (retval)
@@ -407,7 +402,7 @@ out_path:
 	return retval;
 }
 
-struct file *do_filp_handle_open(int mountdirfd, struct file_handle __user *ufh,
+struct file *do_filp_handle_open(int mountdirfd, struct file_handle *handle,
 				 int open_flag)
 {
 	long retval = 0;
@@ -415,7 +410,7 @@ struct file *do_filp_handle_open(int mountdirfd, struct file_handle __user *ufh,
 	struct file *file;
 	const struct export_operations *eops;
 
-	retval = handle_to_path(mountdirfd, ufh, &path, open_flag);
+	retval = handle_to_path(mountdirfd, handle, &path, open_flag);
 	if (retval)
 		return ERR_PTR(retval);
 
@@ -431,13 +426,18 @@ struct file *do_filp_handle_open(int mountdirfd, struct file_handle __user *ufh,
 static long do_handle_open(int mountdirfd, struct file_handle __user *ufh,
 			   int open_flag)
 {
+	struct file_handle *handle __free(kfree) = NULL;
 	struct file *file;
 
 	CLASS(get_unused_fd, fd)(open_flag);
 	if (fd < 0)
 		return fd;
 
-	file = do_filp_handle_open(mountdirfd, ufh, open_flag);
+	handle = get_user_handle(ufh);
+	if (IS_ERR(handle))
+		return PTR_ERR(handle);
+
+	file = do_filp_handle_open(mountdirfd, handle, open_flag);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 

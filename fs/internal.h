@@ -364,6 +364,6 @@ long do_sys_name_to_handle_at(int dfd, const char __user *name,
 			  struct file_handle __user *handle,
 			  void __user *mnt_id, int flag, int lookup_flags);
 struct file_handle *get_user_handle(struct file_handle __user *ufh);
-struct file *do_filp_handle_open(int mountdirfd, struct file_handle __user *ufh,
+struct file *do_filp_handle_open(int mountdirfd, struct file_handle *handle,
 				 int open_flag);
 #endif /* CONFIG_FHANDLE */
