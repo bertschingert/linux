@@ -5251,6 +5251,10 @@ struct inode *__ext4_iget(struct super_block *sb, unsigned long ino,
 	ei = EXT4_I(inode);
 	iloc.bh = NULL;
 
+	ret = -EAGAIN;
+	if (flags & EXT4_IGET_CACHED)
+		goto bad_inode;
+
 	ret = __ext4_get_inode_loc_noinmem(inode, &iloc);
 	if (ret < 0)
 		goto bad_inode;

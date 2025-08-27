@@ -1514,15 +1514,18 @@ void ext4_clear_inode(struct inode *inode)
 }
 
 static struct inode *ext4_nfs_get_inode(struct super_block *sb,
-					u64 ino, u32 generation)
+					u64 ino, u32 generation,
+					ext4_iget_flags flags)
 {
 	struct inode *inode;
+
+	flags |= EXT4_IGET_HANDLE;
 
 	/*
 	 * Currently we don't know the generation for parent directory, so
 	 * a generation of 0 means "accept any"
 	 */
-	inode = ext4_iget(sb, ino, EXT4_IGET_HANDLE);
+	inode = ext4_iget(sb, ino, flags);
 	if (IS_ERR(inode))
 		return ERR_CAST(inode);
 	if (generation && inode->i_generation != generation) {
@@ -1536,15 +1539,46 @@ static struct inode *ext4_nfs_get_inode(struct super_block *sb,
 static struct dentry *ext4_fh_to_dentry(struct super_block *sb, struct fid *fid,
 					int fh_len, int fh_type)
 {
-	return generic_fh_to_dentry(sb, fid, fh_len, fh_type,
-				    ext4_nfs_get_inode);
+	struct inode *inode = NULL;
+	ext4_iget_flags flags = EXT4_IGET_NORMAL;
+
+	if (fh_len < 2)
+		return NULL;
+
+	if (fh_type & FILEID_CACHED)
+		flags |= EXT4_IGET_CACHED;
+
+	switch (FILEID_TYPE(fh_type)) {
+	case FILEID_INO32_GEN:
+	case FILEID_INO32_GEN_PARENT:
+		inode = ext4_nfs_get_inode(sb, fid->i32.ino, fid->i32.gen, flags);
+		break;
+	}
+
+	return d_obtain_alias(inode);
 }
 
 static struct dentry *ext4_fh_to_parent(struct super_block *sb, struct fid *fid,
 					int fh_len, int fh_type)
 {
-	return generic_fh_to_parent(sb, fid, fh_len, fh_type,
-				    ext4_nfs_get_inode);
+	struct inode *inode = NULL;
+	ext4_iget_flags flags = EXT4_IGET_NORMAL;
+
+	if (fh_len <= 2)
+		return NULL;
+
+	if (fh_type & FILEID_CACHED)
+		flags |= EXT4_IGET_CACHED;
+
+	switch (fh_type) {
+	case FILEID_INO32_GEN_PARENT:
+		inode = ext4_nfs_get_inode(sb, fid->i32.parent_ino,
+					   (fh_len > 3 ? fid->i32.parent_gen : 0),
+					   flags);
+		break;
+	}
+
+	return d_obtain_alias(inode);
 }
 
 static int ext4_nfs_commit_metadata(struct inode *inode)
@@ -1634,6 +1668,7 @@ static const struct export_operations ext4_export_ops = {
 	.fh_to_parent = ext4_fh_to_parent,
 	.get_parent = ext4_get_parent,
 	.commit_metadata = ext4_nfs_commit_metadata,
+	.flags = EXPORT_OP_NONBLOCK,
 };
 
 enum {
