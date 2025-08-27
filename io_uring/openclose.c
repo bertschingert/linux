@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/exportfs.h>
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/fdtable.h>
@@ -22,7 +23,13 @@ struct io_open {
 	struct file			*file;
 	int				dfd;
 	u32				file_slot;
-	struct filename			*filename;
+	union {
+		/* For openat(), openat2() */
+		struct filename		*filename;
+
+		/* For open_by_handle_at() */
+		struct file_handle	*handle;
+	};
 	struct open_how			how;
 	unsigned long			nofile;
 };
@@ -239,6 +246,65 @@ int io_name_to_handle_at(struct io_kiocb *req, unsigned int issue_flags)
 	if (ret == -EAGAIN && (issue_flags & IO_URING_F_NONBLOCK))
 		return -EAGAIN;
 
+	if (ret < 0)
+		req_set_fail(req);
+	io_req_set_res(req, ret, 0);
+	return IOU_COMPLETE;
+}
+
+int io_open_by_handle_at_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+{
+	struct io_open *open = io_kiocb_to_cmd(req, struct io_open);
+	u64 flags;
+
+	flags = READ_ONCE(sqe->open_flags);
+	open->how = build_open_how(flags, 0);
+	open->handle = get_user_handle(u64_to_user_ptr(READ_ONCE(sqe->addr)));
+
+	if (IS_ERR(open->handle))
+		return PTR_ERR(open->handle);
+
+	__io_open_prep(req, sqe);
+
+	return 0;
+}
+
+int io_open_by_handle_at(struct io_kiocb *req, unsigned int issue_flags)
+{
+	struct io_open *open = io_kiocb_to_cmd(req, struct io_open);
+	struct file *file;
+	bool fixed = !!open->file_slot;
+	int ret;
+
+	if (issue_flags & IO_URING_F_NONBLOCK)
+		open->handle->handle_type |= FILEID_CACHED;
+	else
+		open->handle->handle_type &= ~FILEID_CACHED;
+
+	if (!fixed) {
+		ret = __get_unused_fd_flags(open->how.flags, open->nofile);
+		if (ret < 0)
+			goto err;
+	}
+
+	file = do_filp_handle_open(open->dfd, open->handle, open->how.flags);
+
+	if (IS_ERR(file)) {
+		if (!fixed)
+			put_unused_fd(ret);
+		ret = PTR_ERR(file);
+		if (ret == -EAGAIN && (issue_flags & IO_URING_F_NONBLOCK))
+			return -EAGAIN;
+		goto err;
+	}
+
+	if (!fixed)
+		fd_install(ret, file);
+	else
+		ret = io_fixed_fd_install(req, issue_flags, file,
+					  open->file_slot);
+
+err:
 	if (ret < 0)
 		req_set_fail(req);
 	io_req_set_res(req, ret, 0);
