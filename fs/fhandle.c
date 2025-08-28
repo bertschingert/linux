@@ -402,6 +402,21 @@ out_path:
 	return retval;
 }
 
+/* TODO: make this take open_how instead of flag */
+struct file *do_filp_path_open(struct path *path, int open_flag)
+{
+	const struct export_operations *eops;
+	struct file *file;
+
+	eops = path->mnt->mnt_sb->s_export_op;
+	if (eops->open)
+		file = eops->open(path, open_flag);
+	else
+		file = file_open_root(path, "", open_flag, 0);
+
+	return file;
+}
+
 static long do_handle_open(int mountdirfd, struct file_handle __user *ufh,
 			   int open_flag)
 {
@@ -409,7 +424,6 @@ static long do_handle_open(int mountdirfd, struct file_handle __user *ufh,
 	long retval = 0;
 	struct path path __free(path_put) = {};
 	struct file *file;
-	const struct export_operations *eops;
 
 	CLASS(get_unused_fd, fd)(open_flag);
 	if (fd < 0)
@@ -423,11 +437,7 @@ static long do_handle_open(int mountdirfd, struct file_handle __user *ufh,
 	if (retval)
 		return retval;
 
-	eops = path.mnt->mnt_sb->s_export_op;
-	if (eops->open)
-		file = eops->open(&path, open_flag);
-	else
-		file = file_open_root(&path, "", open_flag, 0);
+	file = do_filp_path_open(&path, open_flag);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
